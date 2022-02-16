@@ -1,83 +1,58 @@
-const GoogleSpreadsheet = require('google-spreadsheet')
+const { GoogleSpreadsheet } = require('google-spreadsheet')
 const fs = require('fs')
 const TRANSLATION_FILE = 'translation.json'
 
-const load = (options, cb) => {
-  const my_sheet = new GoogleSpreadsheet(options.docId)
-  my_sheet.getInfo(function(err, info) {
-    if (err) {
-      return cb('invalid google key')
+const load = async (options) => {
+  const doc = new GoogleSpreadsheet(options.docId)
+  doc.useApiKey(options.apiKey)
+  try {
+    await doc.loadInfo()
+    const sheet = doc.sheetsByIndex[options.sheet - 1]
+    const row_data = await sheet.getRows()
+    const header = sheet.headerValues
+    const colCount = header.length
+    const rowCount = row_data.length
+    
+    const converted = {}
+    let commentsColumnIndex
+
+    for (let i = 1; i < colCount; i++) {
+      if (options.ignoreCommentsColumn == true && header[i] == 'comments') {
+        // do nothing
+        commentsColumnIndex = i
+      }
     }
 
-    const sheet = info.worksheets[options.sheet - 1]
-    const firstRow = options.firstRow || 1
-    const colCount = options.colCount || sheet.colCount
-    const rowCount = sheet.rowCount
+    for (let i = 0; i < rowCount; i++) {
+      for (let j = 1; j < colCount; j++) {
+        if (options.ignoreCommentsColumn && j == commentsColumnIndex) {
+          // do nothing
+        } else {
+          let lang = header[j]
+          converted[lang] = converted[lang] || {}
 
-    my_sheet.getCells(
-      options.sheet,
-      {
-        'min-row': firstRow,
-        'max-row': rowCount,
-        'min-col': 1,
-        'max-col': colCount,
-        'return-empty': true,
-      },
-      function(err, row_data) {
-        if (err) {
-          return cb(err)
-        }
-        const converted = {}
-        const langs = []
-        let commentsColumnIndex
-
-        for (let i = 1; i < colCount; i++) {
-          if (options.ignoreCommentsColumn == true && row_data[i].value == 'comments') {
-            // do nothing
-            commentsColumnIndex = i
-          } else {
-            if (options.warnOnMissingValues && row_data[i].value.length == 0) {
-              console.log('Column is missing key at index ' + i)
-            }
-            if (options.errorOnMissingValues && row_data[i].value.length == 0) {
-              throw new Error('Column is missing key at index ' + i)
-            }
-            if (row_data[i].value !== undefined) {
-              langs[i] = row_data[i].value
-            }
+          console.log(lang, i,j)
+          const row = row_data[i]
+          if (row === undefined) {
+            continue
           }
-        }
-
-        for (let i = firstRow + 1; i <= rowCount; i++) {
-          for (let j = 1; j < colCount; j++) {
-            if (options.ignoreCommentsColumn && j == commentsColumnIndex) {
-              // do nothing
-            } else {
-              if (options.warnOnMissingValues && row_data[(i - 1) * colCount + j].value.length == 0) {
-                console.log('Cell is missing value at col ' + i + ', row ' + j)
-              }
-              if (options.errorOnMissingValues && row_data[(i - 1) * colCount + j].value.length == 0) {
-                throw new Error('Cell is missing value at col ' + i + ', row ' + j)
-              }
-              let lang = langs[j]
-
-              converted[lang] = converted[lang] || {}
-
-              if (row_data[(i - 1) * colCount + j] === undefined) {
-                continue
-              }
-              if (row_data[(i - 1) * colCount + j].value && row_data[(i - 1) * colCount + j].value !== undefined) {
-                converted[lang][row_data[(i - 1) * colCount].value] = row_data[(i - 1) * colCount + j].value
-              } else {
-              }
-            }
+          if (options.warnOnMissingValues && !row[header[j]]) {
+            console.log('Cell is missing value at col ' + lang + ', row ' + i)
+            throw new Error('Cell is missing value at col ' + lang + ', row ' + i)
           }
+          const base = row[header[0]]
+          const data = row[header[j]]
+          converted[lang][base] = data
         }
-
-        return cb(null, converted)
       }
-    )
-  })
+    }
+
+    return converted
+  } catch (e) {
+    console.log('error', e)
+    return null
+  }
+
 }
 
 const save = (options, data) => {
@@ -95,14 +70,14 @@ const save = (options, data) => {
   Object.keys(data).forEach(lang => {
     try {
       fs.existsSync(`${folderName}/${lang}`)
-    } catch(e) {
+    } catch (e) {
       console.log(`Invalid 'language' name: ${lang}`, e)
       throw `Invalid 'language' name: ${lang}`
     }
     if (!fs.existsSync(`${folderName}/${lang}`)) {
       try {
         fs.mkdirSync(`${folderName}/${lang}`)
-      } catch(e) {
+      } catch (e) {
         console.log(`Invalid 'language' name: ${lang}`, e)
         throw `Invalid 'language' name: ${lang}`
       }
